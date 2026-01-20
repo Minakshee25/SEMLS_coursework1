@@ -6,107 +6,103 @@ import numpy as np
 import lightgbm as lgb
 from sklearn.linear_model import LinearRegression
 
-def parse_dates(dates):
-    """Convert dates to ordinal for regression. Returns None if parsing fails."""
+def parse_dates_to_ordinal(dates):
+    """Convert date strings to ordinal numbers for regression. Returns None if parsing fails."""
     try:
         return pd.to_datetime(dates, format="%Y-%m-%d").map(pd.Timestamp.toordinal).values.reshape(-1, 1)
     except Exception:
         return None
 
-def compute_slope(dates, values):
-    """Compute slope of values over dates using linear regression."""
-    if len(dates) >= 2:
-        dates_ordinal = parse_dates(dates)
-        if dates_ordinal is not None:
-            return LinearRegression().fit(dates_ordinal, values).coef_[0]
+def compute_creatinine_trend(creatinine_dates, creatinine_history):
+    """Compute linear trend (slope) of creatinine over time."""
+    if len(creatinine_dates) >= 2:
+        date_ordinals = parse_dates_to_ordinal(creatinine_dates)
+        if date_ordinals is not None:
+            return LinearRegression().fit(date_ordinals, creatinine_history).coef_[0]
     return 0.0
 
-def extract_features(df):
-    """
-    Extract features from creatinine measurements and demographic data.
-    Returns a DataFrame where each row corresponds to the features of one patient.
-    """
-    feature_rows = []
-    creatinine_cols = [c for c in df.columns if 'creatinine_result' in c]
-    date_cols = [c for c in df.columns if 'creatinine_date' in c]
-    
-    for _, row in df.iterrows():
-        creatinine_vals = row[creatinine_cols].dropna().values
-        dates = row[date_cols].dropna().values
+def compute_patient_features(df):
+    """Extract patient-level features from demographic info and creatinine history."""
+    patient_features = []
 
-        if len(creatinine_vals) == 0:
-            baseline = last = delta = mean = std = slope = 0.0
+    creatinine_columns = [c for c in df.columns if 'creatinine_result' in c]
+    date_columns = [c for c in df.columns if 'creatinine_date' in c]
+
+    for patient in df.itertuples(index=False):
+        creatinine_history = getattr(patient, 'creatinine_result_0', np.array([0.0]))
+        creatinine_history = np.array([getattr(patient, c) for c in creatinine_columns if pd.notnull(getattr(patient, c))])
+        creatinine_dates = np.array([getattr(patient, c) for c in date_columns if pd.notnull(getattr(patient, c))])
+
+        if len(creatinine_history) == 0:
+            baseline = last_measurement = delta = mean_val = std_val = trend = 0.0
         else:
-            baseline = creatinine_vals[0]
-            last = creatinine_vals[-1]
-            delta = last - baseline
-            mean = np.mean(creatinine_vals)
-            std = np.std(creatinine_vals)
-            slope = compute_slope(dates, creatinine_vals)
+            baseline = creatinine_history[0]
+            last_measurement = creatinine_history[-1]
+            delta = last_measurement - baseline
+            mean_val = np.mean(creatinine_history)
+            std_val = np.std(creatinine_history)
+            trend = compute_creatinine_trend(creatinine_dates, creatinine_history)
 
-        sex = 1 if str(row['sex']).lower() in ['m', 'male'] else 0
-        age = row.get('age', 0)
+        sex_binary = 1 if str(getattr(patient, 'sex')).lower() in ['m', 'male'] else 0
+        age_val = getattr(patient, 'age', 0)
 
-        features = {
-            'age': age,
-            'sex': sex,
+        patient_features.append({
+            'age': age_val,
+            'sex': sex_binary,
             'creatinine_baseline': baseline,
-            'creatinine_last': last,
+            'creatinine_last': last_measurement,
             'creatinine_delta': delta,
-            'creatinine_mean': mean,
-            'creatinine_std': std,
-            'creatinine_slope': slope
-        }
-        feature_rows.append(features)
+            'creatinine_mean': mean_val,
+            'creatinine_std': std_val,
+            'creatinine_trend': trend
+        })
 
-    return pd.DataFrame(feature_rows)
+    return pd.DataFrame(patient_features)
 
-def train_model(X_train, y_train):
-    """Train LightGBM classifier and return trained model."""
-    model = lgb.LGBMClassifier(
+def train_aki_predictor(features, labels):
+    """Train LightGBM model to predict AKI."""
+    aki_model = lgb.LGBMClassifier(
         n_estimators=300,
         learning_rate=0.05,
         max_depth=-1,
         num_leaves=31,
         random_state=42
     )
-    model.fit(X_train, y_train)
-    return model
+    aki_model.fit(features, labels)
+    return aki_model
 
 def main():
-    parser = argparse.ArgumentParser(description="AKI prediction pipeline")
-    parser.add_argument("--input", default="test.csv", help="Path to input CSV")
-    parser.add_argument("--output", default="aki.csv", help="Path to output CSV")
+    parser = argparse.ArgumentParser(description="Predict Acute Kidney Injury from patient data")
+    parser.add_argument("--input", default="test.csv", help="Path to test CSV")
+    parser.add_argument("--output", default="aki.csv", help="Path to write predictions CSV")
     parser.add_argument("--train", default="/data/training.csv", help="Path to training CSV")
     args = parser.parse_args()
 
-    # Load datasets
     try:
-        train = pd.read_csv(args.train)
-        test = pd.read_csv(args.input)
+        train_data = pd.read_csv(args.train)
+        test_data = pd.read_csv(args.input)
     except FileNotFoundError as e:
         print(f"Error: {e}")
         return
 
-    # Feature extraction
-    X_train = extract_features(train)
-    y_train = train['aki'].map({'y':1, 'n':0})
-    X_test = extract_features(test)
+    # Extract features
+    train_features = compute_patient_features(train_data)
+    train_labels = train_data['aki'].map({'y':1, 'n':0})
+    test_features = compute_patient_features(test_data)
 
-    X_train.fillna(0, inplace=True)
-    X_test.fillna(0, inplace=True)
+    train_features.fillna(0, inplace=True)
+    test_features.fillna(0, inplace=True)
 
     # Train model
-    model = train_model(X_train, y_train)
+    aki_model = train_aki_predictor(train_features, train_labels)
 
-    # Predict on test set
-    probs_test = model.predict_proba(X_test)[:,1]
-    # Use default threshold 0.5
-    preds_test = (probs_test >= 0.5).astype(int)
-    preds_yn = ['y' if p==1 else 'n' for p in preds_test]
+    # Generate predictions
+    aki_probabilities = aki_model.predict_proba(test_features)[:,1]
+    predicted_labels = (aki_probabilities >= 0.5).astype(int)
+    predicted_yn = ['y' if x == 1 else 'n' for x in predicted_labels]
 
     # Save output
-    pd.DataFrame({'aki': preds_yn}).to_csv(args.output, index=False)
+    pd.DataFrame({'aki': predicted_yn}).to_csv(args.output, index=False)
     print(f"Predictions written to {args.output}")
 
 if __name__ == "__main__":
