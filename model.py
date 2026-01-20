@@ -3,7 +3,6 @@
 import argparse
 import pandas as pd
 import numpy as np
-# from sklearn.ensemble import RandomForestClassifier
 import lightgbm as lgb
 from sklearn.linear_model import LinearRegression
 
@@ -49,7 +48,7 @@ def extract_features(df):
         age = row.get('age', 0)
 
         features = {
-            'age': row['age'],
+            'age': age,
             'sex': sex,
             'creatinine_baseline': baseline,
             'creatinine_last': last,
