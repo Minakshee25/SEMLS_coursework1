@@ -3,7 +3,8 @@
 import argparse
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
+# from sklearn.ensemble import RandomForestClassifier
+import lightgbm as lgb
 from sklearn.linear_model import LinearRegression
 
 def extract_features(df):
@@ -25,7 +26,7 @@ def extract_features(df):
             std = np.std(creatinine_vals)
             if len(dates) >= 2:
                 try:
-                    dates_ordinal = pd.to_datetime(dates).map(pd.Timestamp.toordinal).values.reshape(-1,1)
+                    dates_ordinal = pd.to_datetime(dates, format="%Y-%m-%d").map(pd.Timestamp.toordinal).values.reshape(-1,1)
                     slope = LinearRegression().fit(dates_ordinal, creatinine_vals).coef_[0]
                 except:
                     slope = 0.0
@@ -67,7 +68,14 @@ def main():
     X_test.fillna(0, inplace=True)
 
     # Train model on all data
-    model = RandomForestClassifier(n_estimators=200, random_state=42)
+    # model = RandomForestClassifier(n_estimators=200, random_state=42)
+    model = lgb.LGBMClassifier(
+        n_estimators=300,
+        learning_rate=0.05,
+        max_depth=-1,
+        num_leaves=31,
+        random_state=42
+    )
     model.fit(X_train, y_train)
 
     # Predict on test set
