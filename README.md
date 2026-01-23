@@ -54,32 +54,33 @@ The trend is computed via **linear regression** on date-encoded creatinine measu
 
 ## Usage
 
-Clone the repository, build the Docker image, and run the model using Docker commands.
+The model is packaged to run in a Docker container. Follow these general steps:
 
-### Build Docker Image
+1. **Build the Docker image** from the repository (this only needs to be done once):
 
 ```bash
 docker build -t coursework1 .
 ```
 
-### Run Model Inference
+2. **Run the model on test data** (inference mode):
 
 ```bash
-docker run -v ${PWD}:/data coursework1
+docker run -v /path/to/data:/data coursework1
 ```
 
-* Input and output paths inside the container are `/data/test.csv` and `/data/aki.csv` respectively.
-* Predictions are written as `y` for AKI-positive and `n` for AKI-negative.
+* `/path/to/data` should contain `test.csv`.
+* The model will produce `aki.csv` in the same directory.
+* Predictions are `y` for AKI-positive and `n` for AKI-negative.
 
-### Run Model Validation
-
-To validate the model using the training data and compute the F3 score:
+3. **Run validation** using training data to compute the F3 score:
 
 ```bash
-docker run -v ${PWD}:/data coursework1 python model.py --validate --train /data/training.csv
+docker run -v /path/to/data:/data coursework1 python model.py --validate --train /data/training.csv
 ```
 
-* Pass/fail status is reported based on the NHS baseline F3 (~0.73).
+* Pass/fail is based on the NHS baseline F3 (~0.73).
+
+> Note: Replace `/path/to/data` with the directory on your system where the CSV files are located.
 
 ---
 
