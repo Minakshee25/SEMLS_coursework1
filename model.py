@@ -9,14 +9,32 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import fbeta_score
 
 def parse_dates_to_ordinal(dates):
-    """Convert date strings to ordinal numbers for regression. Returns None if parsing fails."""
+    """
+    Convert date strings to ordinal numbers for regression.
+
+    Args:
+        dates: Array-like of date strings in 'YYYY-MM-DD' format.
+
+    Returns:
+        np.ndarray or None: Ordinal representation of dates shaped (-1, 1), or None if parsing fails.
+
+    """
     try:
         return pd.to_datetime(dates, format="%Y-%m-%d").map(pd.Timestamp.toordinal).values.reshape(-1, 1)
     except Exception:
         return None
 
 def compute_creatinine_trend(creatinine_dates, creatinine_history):
-    """Compute linear trend (slope) of creatinine over time."""
+    """
+    Compute the linear trend (slope) of creatinine values over time.
+
+    Args:
+        creatinine_dates: Array-like of date strings corresponding to measurements.
+        creatinine_history: Array-like of creatinine measurements.
+
+    Returns:
+        float: Slope of creatinine over time. Returns 0.0 if not enough data.
+    """
     if len(creatinine_dates) >= 2:
         date_ordinals = parse_dates_to_ordinal(creatinine_dates)
         if date_ordinals is not None:
@@ -24,7 +42,15 @@ def compute_creatinine_trend(creatinine_dates, creatinine_history):
     return 0.0
 
 def compute_patient_features(df):
-    """Extract patient-level features from demographic info and creatinine history."""
+    """
+    Extract patient-level features from demographics and creatinine history.
+
+    Args:
+        df: Pandas DataFrame containing patient data, including creatinine results and dates.
+
+    Returns:
+        pd.DataFrame: Patient features including age, sex, creatinine baseline, last measurement, delta, mean, std, and trend.
+    """
     patient_features = []
 
     creatinine_columns = [c for c in df.columns if 'creatinine_result' in c]
@@ -61,7 +87,16 @@ def compute_patient_features(df):
     return pd.DataFrame(patient_features)
 
 def train_aki_predictor(features, labels):
-    """Train LightGBM model to predict AKI."""
+    """
+    Train a LightGBM model to predict Acute Kidney Injury (AKI).
+
+    Args:
+        features: Pandas DataFrame of patient features.
+        labels: Array-like of binary labels (0/1) indicating AKI occurrence.
+
+    Returns:
+        lgb.LGBMClassifier: Trained LightGBM model.
+    """
     aki_model = lgb.LGBMClassifier(
         n_estimators=300,
         learning_rate=0.05,
@@ -74,8 +109,15 @@ def train_aki_predictor(features, labels):
 
 def evaluate_model(features, labels, threshold=0.5):
     """
-    Train/validation split, train model, compute F3 score.
-    Returns the F3 score.
+    Split data, train model, and compute F3 score on validation set.
+
+    Args:
+        features: Pandas DataFrame of patient features.
+        labels: Array-like of binary labels (0/1) indicating AKI occurrence.
+        threshold: Float, probability threshold for converting predicted probabilities to binary labels.
+
+    Returns:
+        float: F3 score on the validation set. Returns 0.0 if validation set has a single class.
     """
     X_train, X_val, y_train, y_val = train_test_split(
         features, labels, test_size=0.2, random_state=42, stratify=labels

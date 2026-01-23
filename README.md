@@ -1,142 +1,135 @@
-# AKI Prediction Script
+# SWEMLS Coursework 1: Acute Kidney Injury Prediction
 
-This repository contains a simple end-to-end pipeline to **predict Acute Kidney Injury (AKI)** from patient demographic data and historical creatinine measurements.
+## Overview
 
-The script reads training and test CSV files, extracts meaningful patient-level features from creatinine time series, trains a LightGBM model, and outputs AKI predictions for the test set.
+This project implements a model to predict **Acute Kidney Injury (AKI)** from patient blood test data. The system was developed as part of the SWEMLS coursework for South Riverside Hospital, which aims to alert clinical teams when a patient's condition deteriorates. For this coursework, we focus specifically on AKI as a proxy for general deterioration.
 
----
-
-## What this script does
-
-At a high level, the script:
-
-1. Reads patient data from CSV files
-2. Extracts features from creatinine history (baseline, trend, variability, etc.)
-3. Trains a LightGBM classifier using labeled training data
-4. Predicts AKI for unseen patients
-5. Writes predictions (`y` / `n`) to an output CSV
-
-The goal is to keep the pipeline lightweight, interpretable, and easy to run from the command line.
+The model is trained on patient demographic information (age, sex) and historical creatinine blood test results. Predictions are evaluated using the **F3 score**, prioritizing the detection of false negatives (patients with AKI who might otherwise be overlooked).
 
 ---
 
-## Features used for prediction
+## Dataset
 
-For each patient, the following features are computed:
+* **training.csv**: Contains patient age, sex, historical creatinine results, and AKI diagnosis (`y` or `n`).
+* **test.csv**: Contains patient data without AKI labels. The model predicts AKI for these patients.
 
-* Age
-* Sex (binary encoded: male = 1, female = 0)
-* Creatinine baseline (first available value)
-* Last creatinine measurement
-* Change in creatinine (last − baseline)
-* Mean creatinine
-* Standard deviation of creatinine
-* Creatinine trend (slope over time using linear regression)
-
-If creatinine history is missing or insufficient, the script safely falls back to zeros.
+> The training data is provided in `/data/training.csv` during evaluation.
+> The `aki.csv` output must correspond row-for-row with `test.csv`.
 
 ---
 
-## Model details
+## Features
 
-* Algorithm: LightGBM (`LGBMClassifier`)
-* Objective: Binary classification (AKI vs no AKI)
-* Output: Probability-based prediction with a 0.5 threshold
-* Label encoding:
+The following patient-level features are extracted:
 
-  * `y` → AKI present
-  * `n` → AKI not present
+| Feature               | Description                                  |
+| --------------------- | -------------------------------------------- |
+| `age`                 | Patient age                                  |
+| `sex`                 | Binary encoding (1 = male, 0 = female)       |
+| `creatinine_baseline` | First recorded creatinine value              |
+| `creatinine_last`     | Most recent creatinine value                 |
+| `creatinine_delta`    | Change from baseline to last measurement     |
+| `creatinine_mean`     | Mean of historical creatinine values         |
+| `creatinine_std`      | Standard deviation of creatinine values      |
+| `creatinine_trend`    | Linear trend (slope) of creatinine over time |
 
----
-
-## Input data requirements
-
-### Training CSV
-
-The training file must contain:
-
-* `age`
-* `sex`
-* `aki` (label: `y` or `n`)
-* One or more creatinine result columns:
-
-  * `creatinine_result_0`, `creatinine_result_1`, ...
-* Corresponding date columns:
-
-  * `creatinine_date_0`, `creatinine_date_1`, ...
-
-### Test CSV
-
-The test file should contain the same fields **except** the `aki` column.
+The trend is computed via **linear regression** on date-encoded creatinine measurements.
 
 ---
 
-## How to run
+## Model
 
-### Basic usage
+* **Algorithm**: LightGBM (`LGBMClassifier`)
+* **Hyperparameters**:
+
+  * `n_estimators=300`
+  * `learning_rate=0.05`
+  * `num_leaves=31`
+  * `max_depth=-1`
+  * `random_state=42`
+* Trained to classify patients as AKI-positive or AKI-negative based on extracted features.
+* Threshold for prediction: **0.5** (can be adjusted).
+
+---
+
+## Usage
+
+Clone the repository, build the Docker image, and run the model using Docker commands.
+
+### Build Docker Image
 
 ```bash
-python3 predict_aki.py \
-  --train /data/training.csv \
-  --input test.csv \
-  --output aki.csv
+docker build -t coursework1 .
 ```
 
-### Arguments
+### Run Model Inference
 
-| Argument   | Description                    | Default              |
-| ---------- | ------------------------------ | -------------------- |
-| `--train`  | Path to training CSV           | `/data/training.csv` |
-| `--input`  | Path to test CSV               | `test.csv`           |
-| `--output` | Path to output predictions CSV | `aki.csv`            |
-
----
-
-## Output format
-
-The output file is a CSV with a single column:
-
-```csv
-aki
-y
-n
-y
-n
+```bash
+docker run -v ${PWD}:/data coursework1
 ```
 
-Each row corresponds to a patient in the test dataset.
+* Input and output paths inside the container are `/data/test.csv` and `/data/aki.csv` respectively.
+* Predictions are written as `y` for AKI-positive and `n` for AKI-negative.
+
+### Run Model Validation
+
+To validate the model using the training data and compute the F3 score:
+
+```bash
+docker run -v ${PWD}:/data coursework1 python model.py --validate --train /data/training.csv
+```
+
+* Pass/fail status is reported based on the NHS baseline F3 (~0.73).
 
 ---
 
 ## Dependencies
 
-Make sure the following Python packages are installed:
+* Python >= 3.12
+* `pandas`
+* `numpy`
+* `scikit-learn`
+* `lightgbm`
 
-* pandas
-* numpy
-* scikit-learn
-* lightgbm
-
-You can install them with:
+Install dependencies with:
 
 ```bash
-pip install pandas numpy scikit-learn lightgbm
+pip install -r requirements.txt
 ```
 
 ---
 
-## Notes & assumptions
+## Evaluation
 
-* Creatinine dates are expected in `YYYY-MM-DD` format.
-* Linear regression is used to estimate creatinine trend over time.
-* Missing values are handled conservatively by filling with zeros.
-* This script is intended for experimentation and prototyping, not direct clinical use.
+* **Metric**: F3 score (prioritizes false negatives).
+* **Target**: F3 >= 0.73 (NHS baseline).
+* Engineering quality is also assessed (clean code, error handling, reproducibility).
 
 ---
 
-## Future improvements
+## Notes
 
-* Better handling of irregular time gaps in creatinine measurements
-* Explicit feature normalization
-* Model evaluation metrics and cross-validation
-* Support for additional lab values
+* The hospital dataset is simulated for coursework purposes.
+* False positives are less critical than false negatives, but still relevant.
+* Any third-party libraries used are justified as safe for clinical-style deployment.
+
+---
+
+## Repository Structure
+
+```
+.
+├── model.py          # Main model implementation
+├── training.csv      # Training data (provided during evaluation)
+├── test.csv          # Test data
+├── aki.csv           # Output predictions
+├── requirements.txt  # Python dependencies
+└── Dockerfile        # Docker configuration
+```
+
+---
+
+## Author
+
+* Minakshee Narayankar
+* SWEMLS MSc Coursework 1
