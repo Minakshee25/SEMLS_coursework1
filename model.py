@@ -5,6 +5,8 @@ import pandas as pd
 import numpy as np
 import lightgbm as lgb
 from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import fbeta_score
 
 def parse_dates_to_ordinal(dates):
     """Convert date strings to ordinal numbers for regression. Returns None if parsing fails."""
@@ -29,7 +31,6 @@ def compute_patient_features(df):
     date_columns = [c for c in df.columns if 'creatinine_date' in c]
 
     for patient in df.itertuples(index=False):
-        creatinine_history = getattr(patient, 'creatinine_result_0', np.array([0.0]))
         creatinine_history = np.array([getattr(patient, c) for c in creatinine_columns if pd.notnull(getattr(patient, c))])
         creatinine_dates = np.array([getattr(patient, c) for c in date_columns if pd.notnull(getattr(patient, c))])
 
@@ -71,38 +72,75 @@ def train_aki_predictor(features, labels):
     aki_model.fit(features, labels)
     return aki_model
 
+def evaluate_model(features, labels, threshold=0.5):
+    """
+    Train/validation split, train model, compute F3 score.
+    Returns the F3 score.
+    """
+    X_train, X_val, y_train, y_val = train_test_split(
+        features, labels, test_size=0.2, random_state=42, stratify=labels
+    )
+
+    model = train_aki_predictor(X_train, y_train)
+    probs = model.predict_proba(X_val)[:, 1]
+    preds = (probs >= threshold).astype(int)
+
+    if len(np.unique(y_val)) < 2:
+        print("Warning: Validation set has a single class; F3 undefined")
+        return 0.0
+
+    f3 = fbeta_score(y_val, preds, beta=3)
+    return f3
+
 def main():
     parser = argparse.ArgumentParser(description="Predict Acute Kidney Injury from patient data")
     parser.add_argument("--input", default="test.csv", help="Path to test CSV")
     parser.add_argument("--output", default="aki.csv", help="Path to write predictions CSV")
     parser.add_argument("--train", default="/data/training.csv", help="Path to training CSV")
+    parser.add_argument("--validate", action="store_true", help="Run automated validation instead of inference")
     args = parser.parse_args()
 
     try:
         train_data = pd.read_csv(args.train)
-        test_data = pd.read_csv(args.input)
     except FileNotFoundError as e:
-        print(f"Error: {e}")
+        print(f"Error loading training data: {e}")
         return
 
     # Extract features
     train_features = compute_patient_features(train_data)
-    train_labels = train_data['aki'].map({'y':1, 'n':0})
-    test_features = compute_patient_features(test_data)
-
     train_features.fillna(0, inplace=True)
+    train_labels = train_data['aki'].map({'y':1, 'n':0})
+
+    # ---------------- VALIDATION MODE ----------------
+    if args.validate:
+        f3 = evaluate_model(train_features, train_labels)
+        print(f"Validation F3 score: {f3:.3f}")
+
+        NHS_BASELINE_F3 = 0.73
+        if f3 >= NHS_BASELINE_F3:
+            print("STATUS: PASS — Model meets expected quality")
+            exit(0)
+        else:
+            print("STATUS: FAIL — Model below expected quality")
+            exit(1)
+
+    # ---------------- INFERENCE MODE ----------------
+    try:
+        test_data = pd.read_csv(args.input)
+    except FileNotFoundError as e:
+        print(f"Error loading test data: {e}")
+        return
+
+    test_features = compute_patient_features(test_data)
     test_features.fillna(0, inplace=True)
 
-    # Train model
     aki_model = train_aki_predictor(train_features, train_labels)
+    aki_probs = aki_model.predict_proba(test_features)[:, 1]
+    aki_preds = (aki_probs >= 0.5).astype(int)
 
-    # Generate predictions
-    aki_probabilities = aki_model.predict_proba(test_features)[:,1]
-    predicted_labels = (aki_probabilities >= 0.5).astype(int)
-    predicted_yn = ['y' if x == 1 else 'n' for x in predicted_labels]
+    output = ["y" if p == 1 else "n" for p in aki_preds]
+    pd.DataFrame({"aki": output}).to_csv(args.output, index=False)
 
-    # Save output
-    pd.DataFrame({'aki': predicted_yn}).to_csv(args.output, index=False)
     print(f"Predictions written to {args.output}")
 
 if __name__ == "__main__":
